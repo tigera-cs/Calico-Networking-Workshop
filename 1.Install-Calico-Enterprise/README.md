@@ -40,12 +40,14 @@ echo $CE_VERSION
 
 ### 2. Enable kubectl autocompletion
 
-Before getting started, let's enable bash autocomplete for kubectl so that we can easier interact with kubectl.
+Before getting started, let's enable bash autocomplete for kubectl and add `k` as a short alias for `kubectl`, so that we can easier interact with kubectl.
 
 ```bash
 sudo apt-get install bash-completion
 source /usr/share/bash-completion/bash_completion
 echo 'source <(kubectl completion bash)' >>~/.bashrc
+echo 'alias k=kubectl' >>~/.bashrc
+echo 'complete -o default -F __start_kubectl k' >>~/.bashrc
 source ~/.bashrc
 ```
 
