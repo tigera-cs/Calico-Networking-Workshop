@@ -28,7 +28,7 @@ In this lab environment, Kubernetes has been preinstalled, but as your network p
 Throughout this section you will download several Calico Enterprise manifests, and each manifest URL includes the product version. Rather than hardcoding the version in every command, set it once as an environment variable now. Every `kubectl create`/`curl` command below references `${CE_VERSION}`, so you can retarget the whole install at a different release by changing this single value.
 
 ```bash
-export CE_VERSION=v3.24.0-2.0
+export CE_VERSION=v3.23.2
 ```
 
 > [!NOTE]
@@ -114,9 +114,13 @@ tigera-elasticsearch   kubernetes.io/no-provisioner   Delete          WaitForFir
 
 ### 6. Install the Tigera Operator CRDs and operator
 
-The Tigera Operator is a Kubernetes operator and provides a well-defined API for how you install, configure, and run Calico Enterprise. Tigera operator also automates and controls the lifecycle of a Calico Enterprise deployment. `tigera-operator` deployment has the necessary Calico Enterprise custom resource definitions built into and once it is deployed, it will deploy these CRDs.
-> [!NOTE]
-> The CRDs can also be deployed separately through Calico Enterprise docs site if there is a need.
+The Tigera Operator is a Kubernetes operator and provides a well-defined API for how you install, configure, and run Calico Enterprise. Tigera operator also automates and controls the lifecycle of a Calico Enterprise deployment. The install is two manifests: the first creates the Calico Enterprise custom resource definitions, the second deploys the operator itself.
+
+Install the Tigera Operator and custom resource definitions.
+
+```bash
+kubectl create -f https://downloads.tigera.io/ee/$CE_VERSION/manifests/operator-crds.yaml
+```
 
 ```bash
 kubectl create -f https://downloads.tigera.io/ee/$CE_VERSION/manifests/tigera-operator.yaml
@@ -463,7 +467,7 @@ calicoctl is the Calico Enterprise specific command line utility that allows you
 
 ### 1. Download the calicoctl binary
 
-Download the calicoctl binary for Linux and make it executable. As with the install manifests, the download URL is versioned, so it reuses the `${CE_VERSION}` environment variable you set at the start of this lab (re-export it with `export CE_VERSION=v3.23.1` if you have since opened a new shell).
+Download the calicoctl binary for Linux and make it executable. As with the install manifests, the download URL is versioned, so it reuses the `${CE_VERSION}` environment variable you set at the start of this lab (re-export it with `export CE_VERSION=v3.23.2` if you have since opened a new shell).
 
 ```bash
 curl -o calicoctl -L https://downloads.tigera.io/ee/binaries/${CE_VERSION}/calicoctl
@@ -491,11 +495,11 @@ calicoctl version
 **Example output:**
 
 ```text
-Client Version:    v3.24.0-2.0-calient-1.dev-151-gcec78a0b8a32
+Client Version:    v3.23.2
 Release:           Calico Enterprise
 Git commit:        cec78a0b8a32f0c33739db170ac0133f9a2e63b7
 Cluster Calico Version:               v3.32.0
-Cluster Calico Enterprise Version:    v3.24.0-2.0
+Cluster Calico Enterprise Version:    v3.23.2
 Cluster Type:                         typha,kdd,k8s,operator,bgp,kubeadm
 ```
 
