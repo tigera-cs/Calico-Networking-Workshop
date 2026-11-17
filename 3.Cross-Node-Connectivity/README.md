@@ -803,7 +803,7 @@ default via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.10 metric 100
 10.0.0.2 via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.10 metric 100 
 10.0.1.0/24 dev ens5 proto kernel scope link src 10.0.1.10 metric 100 
 10.0.1.1 dev ens5 proto dhcp scope link src 10.0.1.10 metric 100 
-10.48.2.88/29 via 10.0.1.31 dev ens5 proto bird 
+10.48.2.216/29 via 10.0.1.31 dev ens5 proto bird 
 ```
 
 ### 5. Verify the nginx pod's IP address
