@@ -442,14 +442,14 @@ customer-5c6f8d7b9c-x2k4m
 
 #### Start a packet capture on worker2
 
-Open a **second terminal** on the bastion and SSH into `worker2`. Capture VXLAN packets (UDP port 4789) on the node's fabric interface `ens5`.
+Open a **second terminal** on the bastion and SSH into `worker2`. Capture VXLAN packets (UDP port 4789) on the node's fabric interface `ens5`. The tunnel carries every cross-node pod flow in the cluster, including Calico Enterprise's own components, so the raw capture is very busy. Pipe it through `grep` to keep only the packets whose inner header has the nginx pod IP, plus the outer header line printed just before each one. Replace `10.48.0.12` with your nginx pod IP.
 
 ```bash
 ssh worker2
-sudo tcpdump -ni ens5 udp port 4789
+sudo tcpdump -lni ens5 udp port 4789 | grep -B1 --line-buffered 10.48.0.12
 ```
 
-Leave it running.
+Leave it running. Nothing is printed until the next step sends traffic.
 
 #### Send a request from the customer pod to the nginx pod
 
