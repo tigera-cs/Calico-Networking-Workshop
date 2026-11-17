@@ -714,24 +714,22 @@ spec:
 EOF
 ```
 
-Verify the Gateway got an address from `lb-ippool` and is programmed.
+Verify the Gateway got an address from `lb-ippool` and is programmed. The Envoy pod and its `LoadBalancer` Service are created in the `tigera-gateway` namespace.
 
 ```bash
 kubectl get gateway -n yaobank
-kubectl get svc -n yaobank
+kubectl get svc -n tigera-gateway
 ```
 
 **Example output:**
 
 ```text
-NAME              CLASS                  ADDRESS       PROGRAMMED   AGE
-yaobank-gateway   tigera-gateway-class   10.10.100.2   True         40s
+NAME              CLASS                  ADDRESS      PROGRAMMED   AGE
+yaobank-gateway   tigera-gateway-class   10.10.100.20   True         77s
 
-NAME                                    TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
-customer                                NodePort       10.49.60.52     <none>        80:30180/TCP   2d3h
-database                                ClusterIP      10.49.150.69    <none>        2379/TCP       2d3h
-envoy-yaobank-yaobank-gateway-fdd5b6a9  LoadBalancer   10.49.206.137   10.10.100.2   80:31486/TCP   40s
-summary                                 ClusterIP      10.49.18.111    <none>        80/TCP         2d3h
+NAME                                     TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                                            AGE
+envoy-gateway                            ClusterIP      10.49.198.135   <none>        18000/TCP,18001/TCP,18002/TCP,19001/TCP,9443/TCP   3m
+envoy-yaobank-yaobank-gateway-2ed350cc   LoadBalancer   10.49.68.166    10.10.100.20   80:31813/TCP                                       77s
 ```
 
 ### 5. Create the HTTPRoute
@@ -767,7 +765,46 @@ kubectl get httproute -n yaobank yaobank -o jsonpath='{range .status.parents[*].
 Accepted=True ResolvedRefs=True
 ```
 
-### 6. Advertise the LoadBalancer IPs over BGP
+### 6. Allow the LoadBalancer CIDR on the bastion router
+
+The bastion's BIRD router only installs routes that its import filter `rt_import` accepts. Add the `lb-ippool` CIDR `10.10.100.0/26` to that filter. The `grep` check skips the change if the line is already there, so the command is safe to run more than once.
+
+```bash
+sudo grep -q '10.10.100.0/26' /etc/bird/bird.conf || \
+  sudo sed -i '/if (net ~ 10.50.0.0\/24) then accept;/a\                        if (net ~ 10.10.100.0/26) then accept;' /etc/bird/bird.conf
+```
+
+Verify the filter.
+
+```bash
+sudo sed -n '/filter rt_import/,/}/p' /etc/bird/bird.conf
+```
+
+**Example output:**
+
+```text
+filter rt_import {
+                        if (net ~ 10.48.2.0/24) then accept;
+                        if (net ~ 10.49.0.0/16) then accept;
+                        if (net ~ 10.50.0.0/24) then accept;
+                        if (net ~ 10.10.100.0/26) then accept;
+                        reject;
+        }
+```
+
+Check the configuration is valid, then restart bird. If the check fails, bird is not restarted and keeps running with its current configuration.
+
+```bash
+sudo bird -p -c /etc/bird/bird.conf && sudo systemctl restart bird
+```
+
+Confirm the BGP sessions to the cluster nodes are `Established` again.
+
+```bash
+sudo birdc show protocols
+```
+
+### 7. Advertise the LoadBalancer IPs over BGP
 
 Add the `lb-ippool` CIDR to the BGPConfiguration so the nodes advertise the Gateway address to the bastion.
 
@@ -775,7 +812,7 @@ Add the `lb-ippool` CIDR to the BGPConfiguration so the nodes advertise the Gate
 kubectl patch bgpconfigurations default --type=merge -p '{"spec":{"serviceLoadBalancerIPs":[{"cidr":"10.10.100.0/26"}]}}'
 ```
 
-Check the route on the bastion.
+Check the routes on the bastion.
 
 ```bash
 ip route | grep 10.10.100
@@ -788,9 +825,12 @@ ip route | grep 10.10.100
         nexthop via 10.0.1.20 dev ens5 weight 1 
         nexthop via 10.0.1.30 dev ens5 weight 1 
         nexthop via 10.0.1.31 dev ens5 weight 1 
+10.10.100.20 via 10.0.1.30 dev ens5 proto bird 
 ```
 
-### 7. Access yaobank through the Gateway
+The whole pool is advertised from every node, and the Gateway IP is also advertised as a `/32` from the node running the Envoy pod, because the Envoy Service uses `externalTrafficPolicy: Local`.
+
+### 8. Access yaobank through the Gateway
 
 Save the Gateway address and curl it from the bastion.
 
@@ -802,7 +842,7 @@ curl -s http://$GW_IP | grep -E "<h1>|<h2>"
 **Example output:**
 
 ```text
-10.10.100.2
+10.10.100.20
         <h1>Welcome to YAO Bank</h1>
         <h2>Name: Spike Curtis</h2>
         <h2>Balance: 2389.45</h2>
