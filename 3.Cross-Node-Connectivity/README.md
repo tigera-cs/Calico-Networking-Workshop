@@ -825,7 +825,22 @@ The output above shows that the nginx pod has an IP address from the externally 
 
 ### 6. Test connectivity to the nginx pod from bastion
 
-Let's try connectivity to the nginx pod from the bastion node. Please make sure to replace the IP address of nginx pod from your lab in the following command.
+Let's try connectivity to the nginx pod from the bastion node, and capture the packets on the node hosting the pod to see how they travel.
+
+#### Start a packet capture on the nginx pod's node
+
+Open a **second terminal** on the bastion and SSH into the node hosting the nginx pod (`worker2` in the example output of step 5). Capture on all interfaces, filtered on the nginx pod IP. Replace `10.48.2.216` with your nginx pod IP.
+
+```bash
+ssh worker2
+sudo tcpdump -ni any host 10.48.2.216
+```
+
+Leave it running.
+
+#### Send a request from bastion
+
+Back in the first terminal, curl the nginx pod. Please make sure to replace the IP address of nginx pod from your lab in the following command.
 
 ```bash
 curl 10.48.2.216
@@ -857,6 +872,29 @@ Commercial support is available at
 <p><em>Thank you for using nginx.</em></p>
 </body>
 </html>
+```
+
+#### Examine the captured packets
+
+Look at the second terminal. The start of the connection looks like this.
+
+```text
+15:10:42.102331 ens5  In  IP 10.0.1.10.51844 > 10.48.2.216.80: Flags [S], seq 2213365908, win 62727, options [mss 8961,sackOK,TS val 3291650217 ecr 0,nop,wscale 7], length 0
+15:10:42.102356 cali4b871599db0 Out IP 10.0.1.10.51844 > 10.48.2.216.80: Flags [S], seq 2213365908, win 62727, options [mss 8961,sackOK,TS val 3291650217 ecr 0,nop,wscale 7], length 0
+15:10:42.102498 cali4b871599db0 In  IP 10.48.2.216.80 > 10.0.1.10.51844: Flags [S.], seq 1180422731, ack 2213365909, win 62293, options [mss 8961,sackOK,TS val 2648573891 ecr 3291650217,nop,wscale 7], length 0
+15:10:42.102512 ens5  Out IP 10.48.2.216.80 > 10.0.1.10.51844: Flags [S.], seq 1180422731, ack 2213365909, win 62293, options [mss 8961,sackOK,TS val 2648573891 ecr 3291650217,nop,wscale 7], length 0
+```
+
+Compare this with the VXLAN capture in step 14 of the first section:
+
+* **No encapsulation.** Each packet is a single line with no outer header. The pod IP `10.48.2.216` travels across the fabric as is, because the bastion learned a BGP route for it in step 4.
+* **No NAT.** The source address stays `10.0.1.10`, the bastion's own IP, so the pod sees the real client address.
+* **The forwarding path.** The request comes in on `ens5` and goes out on the pod's `cali` interface, the host end of the pod's veth pair. The reply takes the same path in reverse. This is the node routing table at work, as you examined in module 2.
+
+Press `ctrl+c` to stop `tcpdump`, then exit the SSH session.
+
+```bash
+exit
 ```
 
 ### 7. View the IPAM allocation stats
