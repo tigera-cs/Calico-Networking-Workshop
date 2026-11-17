@@ -9,6 +9,7 @@ This lab provides the instructions to:
 * [Explore Kubernetes service NodePort iptables rules](#explore-kubernetes-service-nodeport-iptables-rules)
 * [Advertise the ServiceIP range using Calico Enterprise](#advertise-the-serviceip-range-using-calico-enterprise)
 * [Advertise services with `externalTrafficPolicy: Local`to preserve the source IP and avoid extra hop in routing](#advertise-services-with-externaltrafficpolicy-local-to-preserve-the-source-ip-and-avoid-extra-hop-in-routing)
+* [Expose a service using Calico Ingress Gateway](#expose-a-service-using-calico-ingress-gateway)
 * [Clean up](#clean-up)
 
 ---
@@ -367,12 +368,12 @@ default via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.10 metric 100
 10.48.2.88/29 via 10.0.1.31 dev ens5 proto bird 
 ```
 
-### 2. Confirm there are no BGP configurations
+### 2. Confirm the default BGPConfiguration exists
 
-Run the following command and ensure that there is no bgpconfigurations in your cluster.
+Run the following command and confirm there is a BGPConfiguration named `default` in your cluster.
 
 > [!NOTE]
-> A BGPConfiguration resource (BGPConfiguration) represents BGP specific configuration options for the cluster or a specific node. The resource with the name `default` has a specific meaning and contains the BGP global default configuration. By default, there is no BGPConfiguration resource deployed in the cluster. However, Once BGP is activated, Calico has default built-in configurations for BGP in its data model. For example, it use 64512 as the default AS number.
+> A BGPConfiguration resource represents BGP specific configuration options for the cluster or a specific node. The resource named `default` contains the BGP global default configuration. The Tigera operator creates it when Calico Enterprise is installed, with the cluster defaults such as AS number 64512. The next steps add to it.
 
 ```bash
 kubectl get bgpconfigurations
@@ -616,6 +617,201 @@ curl 10.0.1.31:30180
 
 ---
 
+## Expose a service using Calico Ingress Gateway
+
+Calico Ingress Gateway is Calico Enterprise's implementation of the Kubernetes Gateway API, based on Envoy Gateway. In this section you expose the yaobank `customer` service through a Gateway. The Gateway is a `LoadBalancer` Service, so Calico Enterprise assigns its IP from a dedicated IPPool and advertises it over BGP to the bastion, the same way it advertised the service cluster IPs earlier in this lab.
+
+### 1. Create an IPPool for LoadBalancer services
+
+The pool only allows the `LoadBalancer` use, so pods never get addresses from it.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  name: lb-ippool
+spec:
+  assignmentMode: Automatic
+  blockSize: 31
+  cidr: 10.10.100.0/26
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: all()
+  vxlanMode: Never
+  allowedUses:
+  - LoadBalancer
+EOF
+```
+
+### 2. Verify the LoadBalancer controller is enabled
+
+Calico Enterprise kube-controllers assigns the IPs. Check that it is set to assign an IP to every `LoadBalancer` Service.
+
+```bash
+kubectl get kubecontrollersconfiguration default -o jsonpath='{.spec.controllers.loadBalancer}{"\n"}'
+```
+
+**Example output:**
+
+```text
+{"assignIPs":"AllServices"}
+```
+
+If the output is empty or different, enable it.
+
+```bash
+kubectl patch kubecontrollersconfiguration default --type=merge -p '{"spec":{"controllers":{"loadBalancer":{"assignIPs":"AllServices"}}}}'
+```
+
+### 3. Enable the Gateway API
+
+The `GatewayAPI` resource must be named `default`. It tells the Tigera operator to install the Gateway API CRDs, run the Envoy Gateway controller and create the GatewayClass `tigera-gateway-class`.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: operator.tigera.io/v1
+kind: GatewayAPI
+metadata:
+  name: default
+EOF
+```
+
+Wait until the status is available and the GatewayClass is accepted.
+
+```bash
+kubectl get tigerastatus gatewayapi
+kubectl get gatewayclass
+```
+
+**Example output:**
+
+```text
+NAME         AVAILABLE   PROGRESSING   DEGRADED   SINCE
+gatewayapi   True        False         False      45s
+
+NAME                   CONTROLLER                                      ACCEPTED   AGE
+tigera-gateway-class   gateway.envoyproxy.io/gatewayclass-controller   True       45s
+```
+
+### 4. Create the Gateway
+
+The Gateway has one HTTP listener on port 80. The operator deploys an Envoy proxy for it, fronted by a `LoadBalancer` Service.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: yaobank-gateway
+  namespace: yaobank
+spec:
+  gatewayClassName: tigera-gateway-class
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+EOF
+```
+
+Verify the Gateway got an address from `lb-ippool` and is programmed.
+
+```bash
+kubectl get gateway -n yaobank
+kubectl get svc -n yaobank
+```
+
+**Example output:**
+
+```text
+NAME              CLASS                  ADDRESS       PROGRAMMED   AGE
+yaobank-gateway   tigera-gateway-class   10.10.100.2   True         40s
+
+NAME                                    TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+customer                                NodePort       10.49.60.52     <none>        80:30180/TCP   2d3h
+database                                ClusterIP      10.49.150.69    <none>        2379/TCP       2d3h
+envoy-yaobank-yaobank-gateway-fdd5b6a9  LoadBalancer   10.49.206.137   10.10.100.2   80:31486/TCP   40s
+summary                                 ClusterIP      10.49.18.111    <none>        80/TCP         2d3h
+```
+
+### 5. Create the HTTPRoute
+
+The route attaches to the Gateway and sends all requests to the `customer` service on port 80.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: yaobank
+  namespace: yaobank
+spec:
+  parentRefs:
+  - name: yaobank-gateway
+  rules:
+  - backendRefs:
+    - name: customer
+      port: 80
+EOF
+```
+
+Verify the route is accepted and attached.
+
+```bash
+kubectl get httproute -n yaobank yaobank -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status} {end}{"\n"}'
+```
+
+**Example output:**
+
+```text
+Accepted=True ResolvedRefs=True
+```
+
+### 6. Advertise the LoadBalancer IPs over BGP
+
+Add the `lb-ippool` CIDR to the BGPConfiguration so the nodes advertise the Gateway address to the bastion.
+
+```bash
+kubectl patch bgpconfigurations default --type=merge -p '{"spec":{"serviceLoadBalancerIPs":[{"cidr":"10.10.100.0/26"}]}}'
+```
+
+Check the route on the bastion.
+
+```bash
+ip route | grep 10.10.100
+```
+
+**Example output:**
+
+```text
+10.10.100.0/26 proto bird 
+        nexthop via 10.0.1.20 dev ens5 weight 1 
+        nexthop via 10.0.1.30 dev ens5 weight 1 
+        nexthop via 10.0.1.31 dev ens5 weight 1 
+```
+
+### 7. Access yaobank through the Gateway
+
+Save the Gateway address and curl it from the bastion.
+
+```bash
+GW_IP=$(kubectl get gateway -n yaobank yaobank-gateway -o jsonpath='{.status.addresses[0].value}') && echo $GW_IP
+curl -s http://$GW_IP | grep -E "<h1>|<h2>"
+```
+
+**Example output:**
+
+```text
+10.10.100.2
+        <h1>Welcome to YAO Bank</h1>
+        <h2>Name: Spike Curtis</h2>
+        <h2>Balance: 2389.45</h2>
+```
+
+The request reaches the Gateway's Envoy pod through the advertised LoadBalancer IP, and Envoy forwards it to the `customer` pod.
+
+---
+
 ## Clean up
 
 Undo the changes made in this lab before moving on to the next lab.
@@ -642,12 +838,43 @@ Delete the BGPPeer to the bastion node that you created in the previous lab.
 kubectl delete bgppeers bgppeer-global-64512
 ```
 
-### 3. Delete the yaobank namespace
+### 3. Reset externalTrafficPolicy on the customer service
 
-The yaobank application is deployed again in a later lab. Delete its namespace for now.
+Earlier in this lab you set `externalTrafficPolicy: Local` on the `customer` service. That setting is not removed by the BGPConfiguration change above, because it lives on the Kubernetes Service itself. Leave it in place and the NodePort keeps failing on any node without a local `customer` pod. Set it back to the default, `Cluster`.
 
 ```bash
-kubectl delete namespace yaobank
+kubectl patch svc -n yaobank customer -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
+```
+
+**Example output:**
+
+```text
+service/customer patched
+```
+
+Verify the NodePort works again from the bastion through `control1`, which has no `customer` pod.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' 10.0.1.20:30180
+```
+
+**Example output:**
+
+```text
+200
+```
+
+Keep the yaobank application deployed. The `6. Implement Calico Enterprise eBPF` lab uses it.
+
+### 4. Remove the Ingress Gateway resources
+
+Delete the HTTPRoute and the Gateway, stop advertising the LoadBalancer IPs, then delete the LoadBalancer IPPool. Keep the `GatewayAPI` resource, it does not affect the following labs.
+
+```bash
+kubectl delete httproute -n yaobank yaobank
+kubectl delete gateway -n yaobank yaobank-gateway
+kubectl patch bgpconfigurations default --type=merge -p '{"spec":{"serviceLoadBalancerIPs":null}}'
+kubectl delete ippool lb-ippool
 ```
 
 > **Congratulations! You have completed `4. Kubernetes Services and CE Service Advertisement` lab.**

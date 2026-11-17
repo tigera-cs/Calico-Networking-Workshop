@@ -48,5 +48,4 @@ ssh worker2
 | 3 | [Cross Node Connectivity](./3.Cross-Node-Connectivity/README.md) | Use VXLAN mode, configure an externally routable IPPool, and peer with an upstream BGP router |
 | 4 | [Kubernetes Services and CE Service Advertisement](./4.Kubernetes-Services-and-CE-Service-Advertisement/README.md) | Explore service iptables rules and advertise service IPs over BGP |
 | 5 | [Calico Enterprise Egress Gateway](./5.Calico-Enterprise-Egress-Gateway/README.md) | Give traffic leaving the cluster a fixed source identity |
-| 6 | [Calico Ingress Gateway](./6.Calico-Ingress-Gateway/README.md) | Build a shared Gateway with TLS passthrough, TLS termination, HTTP redirect and canary patterns |
-| 7 | [Implement Calico Enterprise eBPF](./7.Implement-Calico-Enterprise-eBPF/README.md) | Enable, inspect and troubleshoot the eBPF dataplane, then revert to iptables |
+| 6 | [Implement Calico Enterprise eBPF](./6.Implement-Calico-Enterprise-eBPF/README.md) | Enable, inspect and troubleshoot the eBPF dataplane, then revert to iptables |

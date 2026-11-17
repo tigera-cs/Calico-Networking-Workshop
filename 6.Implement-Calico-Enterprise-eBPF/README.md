@@ -1,4 +1,4 @@
-# Module 7: Implement Calico Enterprise eBPF
+# Module 6: Implement Calico Enterprise eBPF
 
 ## In this lab
 
@@ -529,13 +529,13 @@ Hook: tc egress
 
 ### 18. Watch the policy rule counts change under load
 
-Record the `Hit count` for each rule above, then send some curl requests to yaobank and see how the counts change.
+Record the `Hit count` for each rule above, then send some curl requests to yaobank and see how the counts change. The `customer` service is exposed as a NodePort, so send the requests from the bastion to port `30180` on `control1`, as you did in earlier modules.
 
 ```bash
-for i in 1 2 3 4; do curl -sk -o /dev/null -w '%{http_code}\n' https://yaobank.${LABNAME}.training.tigera.ca; done
+for i in 1 2 3 4; do curl -s -o /dev/null -w '%{http_code}\n' http://10.0.1.20:30180; done
 ```
 
-The hit count goes up once per new connection, not once per request. Calico Enterprise checks policy only on the first packet of a connection; after that, the connection is tracked and its packets are allowed without checking the policy again. Your requests reach the customer pod through the Gateway's Envoy proxy, which reuses its connections to the pod. So the 4 requests usually add fewer than 4 hits to the port 80 rule; in the example below, they added 2.
+The hit count goes up once per new connection, not once per packet. Calico Enterprise checks policy only on the first packet of a connection; after that, the connection is tracked and its packets are allowed without checking the policy again. Each `curl` command above opens a new TCP connection to the customer pod, so the 4 requests add 4 hits to the port 80 rule.
 
 Run the policy dump again.
 
@@ -552,7 +552,7 @@ Hook: tc egress
   Tier: default
     Policy: NetworkPolicy yaobank/default.customer 0
       Rule: yaobank/default.customer  Action: allow
-      Hit count: 2
+      Hit count: 4
       Rule: yaobank/default.customer  Action: allow
       Hit count: 0
       Rule: yaobank/default.customer  Action: allow
@@ -575,7 +575,7 @@ kubectl exec -n calico-system $CUSTOMER_CALICO_NODE -c calico-node -- \
 Hook: tc egress
     Policy: NetworkPolicy yaobank/default.customer 0
       Rule: yaobank/default.customer  Action: allow
-      Hit count: 3
+      Hit count: 4
       // If protocol != tcp, skip to next rule
       // If dest port is not within any of {80}, skip to next rule
       Rule: yaobank/default.customer  Action: allow
@@ -800,8 +800,8 @@ Switching from `eBPF` to `iptables` dataplane is disruptive. Long-lived connecti
  kubectl delete pods -A --all --force --grace-period=0
 ```
 
-> **Congratulations! You have completed `7. Implement Calico Enterprise eBPF` lab.**
+> **Congratulations! You have completed `6. Implement Calico Enterprise eBPF` lab.**
 
 ---
 
-[← Previous: 6. Calico Ingress Gateway](../6.Calico-Ingress-Gateway/README.md) | [Training overview](../README.md)
+[← Previous: 5. Calico Enterprise Egress Gateway](../5.Calico-Enterprise-Egress-Gateway/README.md) | [Training overview](../README.md)

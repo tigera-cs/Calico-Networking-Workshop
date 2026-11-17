@@ -541,4 +541,4 @@ kubectl delete egressgateway egress-gateway -n default
 
 ---
 
-[← Previous: 4. Kubernetes Services and CE Service Advertisement](../4.Kubernetes-Services-and-CE-Service-Advertisement/README.md) | [Training overview](../README.md) | [Next: 6. Calico Ingress Gateway →](../6.Calico-Ingress-Gateway/README.md)
+[← Previous: 4. Kubernetes Services and CE Service Advertisement](../4.Kubernetes-Services-and-CE-Service-Advertisement/README.md) | [Training overview](../README.md) | [Next: 6. Implement Calico Enterprise eBPF →](../6.Implement-Calico-Enterprise-eBPF/README.md)
