@@ -357,7 +357,153 @@ Exit the ssh mode from control1.
 exit
 ```
 
-### 14. Reset the default IPPool to native BGP
+### 14. Test pod-to-pod connectivity over VXLAN
+
+Now let's watch VXLAN carry a real pod-to-pod request between two nodes. Both pods in this test get their IPs from the default IPPool, which is now in VXLAN mode.
+
+#### Pin the customer pod to worker1 and deploy nginx on worker2
+
+Find the node names of `worker1` and `worker2` from their IP addresses.
+
+```bash
+WORKER1=$(kubectl get nodes -o wide | grep 10.0.1.30 | awk '{print $1}') && echo $WORKER1
+WORKER2=$(kubectl get nodes -o wide | grep 10.0.1.31 | awk '{print $1}') && echo $WORKER2
+```
+
+**Example output:**
+
+```text
+ip-10-0-1-30.eu-west-1.compute.internal
+ip-10-0-1-31.eu-west-1.compute.internal
+```
+
+Pin the `customer` deployment to `worker1`. The customer pod is recreated on that node.
+
+```bash
+kubectl patch deployment customer -n yaobank -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"'$WORKER1'"}}}}}'
+```
+
+Deploy an nginx pod pinned to `worker2`.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: yaobank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: $WORKER2
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+EOF
+```
+
+Verify the customer pod is on `worker1`, the nginx pod is on `worker2`, and both have IPs from `10.48.0.0/24`.
+
+```bash
+kubectl get pods -n yaobank -l 'app in (customer, nginx)' -o wide
+```
+
+**Example output:**
+
+```text
+NAME                        READY   STATUS    RESTARTS   AGE   IP            NODE                                      NOMINATED NODE   READINESS GATES
+customer-5c6f8d7b9c-x2k4m   1/1     Running   0          25s   10.48.0.200   ip-10-0-1-30.eu-west-1.compute.internal   <none>           <none>
+nginx-7c79c4bf97-m8tzq      1/1     Running   0          20s   10.48.0.12    ip-10-0-1-31.eu-west-1.compute.internal   <none>           <none>
+```
+
+Save the customer pod name and the nginx pod IP.
+
+```bash
+CUSTOMER_POD=$(kubectl get pods -n yaobank -l app=customer -o jsonpath='{.items[0].metadata.name}') && echo $CUSTOMER_POD
+NGINX_IP=$(kubectl get pods -n yaobank -l app=nginx -o jsonpath='{.items[0].status.podIP}') && echo $NGINX_IP
+```
+
+**Example output:**
+
+```text
+customer-5c6f8d7b9c-x2k4m
+10.48.0.12
+```
+
+#### Start a packet capture on worker2
+
+Open a **second terminal** on the bastion and SSH into `worker2`. Capture VXLAN packets (UDP port 4789) on the node's fabric interface `ens5`.
+
+```bash
+ssh worker2
+sudo tcpdump -ni ens5 udp port 4789
+```
+
+Leave it running.
+
+#### Send a request from the customer pod to the nginx pod
+
+Back in the first terminal, exec into the customer pod and send one HTTP request to the nginx pod IP.
+
+```bash
+kubectl exec -n yaobank $CUSTOMER_POD -- curl -s -o /dev/null -w '%{http_code}\n' http://$NGINX_IP
+```
+
+**Example output:**
+
+```text
+200
+```
+
+#### Examine the captured packets
+
+Look at the second terminal. The start of the connection looks like this.
+
+```text
+14:02:11.318722 IP 10.0.1.30.52913 > 10.0.1.31.4789: VXLAN, flags [I] (0x08), vni 4096
+IP 10.48.0.200.40512 > 10.48.0.12.80: Flags [S], seq 1799453702, win 62377, options [mss 8911,sackOK,TS val 1038462153 ecr 0,nop,wscale 7], length 0
+14:02:11.318901 IP 10.0.1.31.46820 > 10.0.1.30.4789: VXLAN, flags [I] (0x08), vni 4096
+IP 10.48.0.12.80 > 10.48.0.200.40512: Flags [S.], seq 2416370283, ack 1799453703, win 62293, options [mss 8911,sackOK,TS val 2648573891 ecr 1038462153,nop,wscale 7], length 0
+14:02:11.319344 IP 10.0.1.30.52913 > 10.0.1.31.4789: VXLAN, flags [I] (0x08), vni 4096
+IP 10.48.0.200.40512 > 10.48.0.12.80: Flags [.], ack 1, win 488, options [nop,nop,TS val 1038462154 ecr 2648573891], length 0
+```
+
+Every packet is printed as two lines, because it is one packet inside another:
+
+* **Outer header:** `10.0.1.30.52913 > 10.0.1.31.4789`. The source and destination are the **node** IPs, the protocol is UDP and the destination port is `4789`, the VXLAN port. `vni 4096` is the VXLAN network identifier Calico uses. This is all the underlying network sees.
+* **Inner header:** `10.48.0.200.40512 > 10.48.0.12.80`. The original packet from the customer **pod** to the nginx **pod**, untouched. The `vxlan.calico` interface on worker2 strips the outer header and the inner packet is delivered to the nginx pod's `cali` interface, following the routes you examined in step 10.
+
+The reply from nginx is encapsulated the same way in the opposite direction, outer `10.0.1.31 > 10.0.1.30`, inner `10.48.0.12.80 > 10.48.0.200.40512`.
+
+> [!NOTE]
+> The outer UDP source port (`52913` here) is a hash of the inner packet's addresses and ports. Different pod-to-pod flows get different outer source ports, so the underlying network can spread them across equal-cost paths.
+
+#### Stop the capture and clean up
+
+In the second terminal, press `ctrl+c` to stop `tcpdump`, then exit the SSH session.
+
+```bash
+exit
+```
+
+In the first terminal, delete the nginx deployment and remove the node pin from the customer deployment.
+
+```bash
+kubectl delete deployment nginx -n yaobank
+kubectl patch deployment customer -n yaobank -p '{"spec":{"template":{"spec":{"nodeSelector":null}}}}'
+```
+
+### 15. Reset the default IPPool to native BGP
 
 Reset the default IPPool configuration to native bgp again by setting `vxlanMode: Never`.
 
