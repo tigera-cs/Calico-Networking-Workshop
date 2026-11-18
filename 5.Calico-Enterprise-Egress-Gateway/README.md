@@ -679,7 +679,12 @@ EOF
 
 ### 31. Observe the egress gateway becomes non-ready
 
-Once pings fail for 15 seconds (`timeoutSeconds`), the egress gateway reports itself unhealthy. Kubernetes marks the pod non-ready after three failed readiness checks, 30 seconds apart, so expect about 1 to 2 minutes, as depicted below.
+Two separate checks are involved, so the pod does not go non-ready immediately:
+
+1. **The ICMP probe inside the egress gateway.** The gateway pings `10.0.1.10` every 5 seconds (`intervalSeconds`). Once it has had no reply for 15 seconds (`timeoutSeconds`), it starts reporting itself as not ready on its own `/readiness` HTTP endpoint.
+2. **The Kubernetes readiness probe on the pod.** The kubelet calls that `/readiness` endpoint with the default settings: every 10 seconds, and it needs 3 consecutive failures before it marks the pod `0/1`.
+
+Added together, expect the pod to show `0/1` roughly 45 seconds to 1 minute after the policy was applied.
 
 ```bash
 watch kubectl get pods -n default -l egress-code=red -o wide
