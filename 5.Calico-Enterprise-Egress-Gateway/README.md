@@ -370,9 +370,7 @@ Go to the terminal that you ran the following netcat server on the `bastion` nod
 ```text
 tigera@bastion:~$ netcat -nvlkp 7777
 Listening on 0.0.0.0 7777
-Connection received on 10.10.10.0 39457tigera@bastion:~$ netcat -nvlkp 7777
-Listening on 0.0.0.0 7777
-Connection received on 10.10.10.0 39457
+Connection received on 10.10.10.2 39457
 ```
 
 Stop the netcat listener process in the `bastion` host with `^C`.
@@ -432,7 +430,7 @@ ip route show table 250
 **Example output:**
 
 ```text
-default via 10.10.10.0 dev egress.calico onlink 
+default via 10.10.10.2 dev egress.calico onlink 
 ```
 
 ### 22. Configure an ICMP readiness probe on the egress gateway
