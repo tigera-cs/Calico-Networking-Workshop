@@ -221,8 +221,6 @@ EOF
 ```yaml
 kubectl patch bgpconfigurations default --type=merge -p '
 spec:
-  serviceClusterIPs:
-  - cidr: 10.49.0.0/16
   communities:
   - name: bgp-large-community
     value: 64512:120
@@ -327,10 +325,6 @@ default via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.10 metric 100
 10.0.1.1 dev ens5 proto dhcp scope link src 10.0.1.10 metric 100 
 10.10.10.2 via 10.0.1.30 dev ens5 proto bird 
 10.48.2.88/29 via 10.0.1.31 dev ens5 proto bird 
-10.49.0.0/16 proto bird 
-	nexthop via 10.0.1.20 dev ens5 weight 1 
-	nexthop via 10.0.1.30 dev ens5 weight 1 
-	nexthop via 10.0.1.31 dev ens5 weight 1 
 ```
 
 ### 13. Start a netcat listener on the bastion
