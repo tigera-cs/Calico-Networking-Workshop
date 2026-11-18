@@ -433,7 +433,191 @@ ip route show table 250
 default via 10.10.10.2 dev egress.calico onlink 
 ```
 
-### 22. Configure an ICMP readiness probe on the egress gateway
+### 22. Create a second egress gateway IPPool
+
+So far every pod in `app1` leaves the cluster with the `red` egress gateway's IP. Now we add a second egress gateway, `green`, with its own IPPool, so that a second application leaves the cluster with a different source IP and through a different gateway pod.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  name: egress-ippool-2
+spec:
+  cidr: 10.10.20.0/30
+  blockSize: 32
+  nodeSelector: "!all()"
+EOF
+```
+
+### 23. Deploy the second egress gateway client application
+
+Create the `app2` namespace and a client application in it.
+
+```yaml
+kubectl apply -f -<<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app2
+  labels:
+    tenant: tenant2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app2-deployment
+  namespace: app2
+  labels:
+    app: app2
+    tenant: tenant2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app2
+      tenant: tenant2
+  template:
+    metadata:
+      labels:
+        app: app2
+        tenant: tenant2
+    spec:
+      containers:
+      - name: app2
+        image: praqma/network-multitool
+        resources:
+          requests:
+            cpu: "1m"
+            memory: "20Mi"
+          limits:
+            cpu: "10m"
+            memory: "20Mi"
+EOF
+```
+
+Make sure the pod is running.
+
+```bash
+kubectl get pods -n app2
+```
+
+### 24. Deploy the green egress gateway in the app2 namespace
+
+This time the egress gateway is deployed in the same namespace as its client, `app2`. It takes its IP from the `10.10.20.0/30` pool and is labeled `egress-code: green`.
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: operator.tigera.io/v1
+kind: EgressGateway
+metadata:
+  name: egress-gateway-green
+  namespace: app2
+spec:
+  logSeverity: "Info"
+  replicas: 1
+  ipPools:
+  - cidr: "10.10.20.0/30"
+  template:
+    metadata:
+      labels:
+        egress-code: green
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      terminationGracePeriodSeconds: 0
+EOF
+```
+
+Make sure the green egress gateway pod is running and has an IP address from the `10.10.20.0/30` pool.
+
+```bash
+kubectl get pods -n app2 -l egress-code=green -o wide
+```
+
+**Example output:**
+
+```text
+NAME                                    READY   STATUS    RESTARTS   AGE   IP           NODE                                         NOMINATED NODE   READINESS GATES
+egress-gateway-green-7c9d6f5b8d-4xk2p   1/1     Running   0          40s   10.10.20.2   ip-10-0-1-30.ca-central-1.compute.internal   <none>           <none>
+```
+
+### 25. Annotate the app2 namespace to use the green egress gateway
+
+Annotate the `app2` namespace to select the egress gateway by the `egress-code: green` label. Because the green egress gateway runs in the same namespace as its client, no `namespaceSelector` annotation is needed this time.
+
+```bash
+kubectl annotate ns app2 egress.projectcalico.org/selector="egress-code == 'green'"
+```
+
+Verify the annotation.
+
+```bash
+kubectl get ns app2 -o jsonpath='{.metadata.annotations.egress\.projectcalico\.org/selector}{"\n"}'
+```
+
+**Example output:**
+
+```text
+egress-code == 'green'
+```
+
+### 26. Allow the green egress gateway network on the bastion
+
+As in step 11, the bastion only installs routes that its `rt_import` filter accepts, so add the green egress gateway IPPool `10.10.20.0/30` to the filter and restart bird.
+
+```bash
+sudo grep -q '10.10.20.0/30' /etc/bird/bird.conf || \
+  sudo sed -i '/if (net ~ 10.10.10.0\/30) then accept;/a\                        if (net ~ 10.10.20.0/30) then accept;' /etc/bird/bird.conf
+sudo sed -n '/filter rt_import/,/}/p' /etc/bird/bird.conf
+sudo bird -p -c /etc/bird/bird.conf && sudo systemctl restart bird
+```
+
+Check the routes on the `bastion` node. There is now one route per egress gateway, each pointing at the worker node where that gateway pod runs.
+
+```bash
+ip route | grep 10.10
+```
+
+**Example output:**
+
+```text
+10.10.10.2 via 10.0.1.30 dev ens5 proto bird 
+10.10.20.2 via 10.0.1.31 dev ens5 proto bird 
+```
+
+### 27. Confirm app1 and app2 leave the cluster through different egress gateways
+
+Start the netcat listener on the `bastion` node again.
+
+```bash
+netcat -nvlkp 7777
+```
+
+On the original terminal window, connect to the bastion port from an `app1` pod and then from the `app2` pod.
+
+```bash
+APP1_POD=$(kubectl get pod -n app1 --no-headers -o name | head -1) && echo $APP1_POD
+kubectl exec $APP1_POD -n app1 -- nc -zv 10.0.1.10 7777
+```
+
+```bash
+APP2_POD=$(kubectl get pod -n app2 --no-headers -o name | head -1) && echo $APP2_POD
+kubectl exec $APP2_POD -n app2 -- nc -zv 10.0.1.10 7777
+```
+
+Go back to the netcat listener on the `bastion` node. The first connection comes from the `red` egress gateway IP and the second from the `green` egress gateway IP. The two applications reach the same external destination through two different gateways, each with its own persistent source IP.
+
+```text
+tigera@bastion:~$ netcat -nvlkp 7777
+Listening on 0.0.0.0 7777
+Connection received on 10.10.10.2 41822
+Connection received on 10.10.20.2 51036
+```
+
+Stop the netcat listener process in the `bastion` host with `^C`.
+
+### 28. Configure an ICMP readiness probe on the egress gateway
 
 Egress gateways support HTTP and ICMP probes for readiness health checking. If all probes of one type (ICMP or HTTP) fail, the egress gateway pod failing the probe goes non-Ready. Let's configure our egress gateway to ping the bastion node `10.0.1.10` for its readiness check. Should this ping fail, the egress gateway pod should go non-ready.
 
@@ -455,7 +639,7 @@ kubectl get egressgateway egress-gateway -n default -o jsonpath='{.spec.egressGa
 {"intervalSeconds":5,"ips":["10.0.1.10"],"timeoutSeconds":15}
 ```
 
-### 23. Confirm the egress gateway pod is running
+### 29. Confirm the egress gateway pod is running
 
 Make sure that the new egress gateway pod is running and ready by running the following command.
 
@@ -463,7 +647,7 @@ Make sure that the new egress gateway pod is running and ready by running the fo
 kubectl get pods -n default -l egress-code=red -o wide
 ```
 
-### 24. Block ICMP traffic to the bastion with a network policy
+### 30. Block ICMP traffic to the bastion with a network policy
 
 Let's now implement a security policy that blocks ICMP traffic from egress gateway pod to `10.0.1.10`, but allows every other traffic.
 
@@ -493,7 +677,7 @@ spec:
 EOF
 ```
 
-### 25. Observe the egress gateway becomes non-ready
+### 31. Observe the egress gateway becomes non-ready
 
 Once pings fail for 15 seconds (`timeoutSeconds`), the egress gateway reports itself unhealthy. Kubernetes marks the pod non-ready after three failed readiness checks, 30 seconds apart, so expect about 1 to 2 minutes, as depicted below.
 
@@ -513,12 +697,13 @@ Press `Ctrl+C` to stop `watch`.
 > [!NOTE]
 > Felix on each node also checks the readiness of every egress gateway and stops sending traffic through one that is not ready. With no ready egress gateway left, traffic from `app1` to destinations outside the cluster is dropped rather than sent from the pod's own IP address, so the source IP that outside systems see never changes. It flows again through the egress gateway as soon as the gateway is ready again.
 
-### 26. Clean up the lab resources
+### 32. Clean up the lab resources
 
 Clean up the resources that were deployed for the purpose of this lab.
 
 ```bash
 kubectl delete ns app1
+kubectl delete ns app2
 ```
 
 ```bash
