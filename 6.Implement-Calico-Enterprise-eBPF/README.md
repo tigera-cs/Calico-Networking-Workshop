@@ -144,7 +144,7 @@ You should see an output similar to the following.
 
 ### 8. Validate eBPF is enforced on the interfaces
 
-Let's validate if eBPF is enforced. Calico Enterprise attaches its eBPF programs to each network interface with TCX, the kernel's eBPF attachment point for traffic control. You list them with `bpftool`. The validation can be done directly from the cluster node by SSHing into the node or via the calico-node pod. Let's do the validation via `control1` node and the `calico-node` pod running on `control1`.
+Let's validate if eBPF is enforced. Calico Enterprise attaches its eBPF programs to each network interface through the kernel's traffic control (`tc`) hook, using a `clsact` qdisc that gives it an ingress and an egress attachment point on every interface. You list them with `bpftool`. The validation can be done directly from the cluster node by SSHing into the node or via the calico-node pod. Let's do the validation via `control1` node and the `calico-node` pod running on `control1`.
 
 **Validation from cluster node**
 
@@ -169,8 +169,12 @@ sudo bpftool net show
 You should see an output similar to the following. Each line under `tc:` shows one interface and one Calico eBPF program attached to it:
 
 * `ens5` is the node's network card, and each `cali*` interface connects one pod to the node.
-* `cali_tc_preamble` is Calico's entry program. Every packet goes through it first, and it passes the packet on to the rest of Calico's eBPF code.
-* `tcx/ingress` catches packets coming into the interface, and `tcx/egress` catches packets going out. Each interface has both.
+* `cali_tc_preambl` is Calico's entry program (`bpftool` truncates the name `cali_tc_preamble`). Every packet goes through it first, and it passes the packet on to the rest of Calico's eBPF code.
+* `clsact/ingress` catches packets coming into the interface, and `clsact/egress` catches packets going out. Each interface has both.
+* The number in brackets and after `id` is the kernel's ID for the loaded eBPF program.
+
+> [!NOTE]
+> On kernels 6.6 and newer, Calico uses the newer TCX attachment point instead, and these lines read `tcx/ingress` and `tcx/egress`.
 
 This is why eBPF mode works: Calico sees every packet entering or leaving the node and its pods, so it can apply network policy and load-balance services itself, without iptables or kube-proxy.
 
@@ -178,28 +182,30 @@ This is why eBPF mode works: Calico sees every packet entering or leaving the no
 xdp:
 
 tc:
-lo(1) tcx/ingress cali_tc_preamble prog_id 1301 link_id 120 
-lo(1) tcx/egress cali_tc_preamble prog_id 1303 link_id 121 
-ens5(2) tcx/ingress cali_tc_preamble prog_id 1329 link_id 127 
-ens5(2) tcx/egress cali_tc_preamble prog_id 1326 link_id 125 
-cali2d9ee050f0e(7) tcx/ingress cali_tc_preamble prog_id 1354 link_id 128 
-cali2d9ee050f0e(7) tcx/egress cali_tc_preamble prog_id 1356 link_id 129 
-cali0340070abf5(10) tcx/ingress cali_tc_preamble prog_id 1363 link_id 131 
-cali0340070abf5(10) tcx/egress cali_tc_preamble prog_id 1367 link_id 133 
-calibe31168aff7(11) tcx/ingress cali_tc_preamble prog_id 1358 link_id 130 
-calibe31168aff7(11) tcx/egress cali_tc_preamble prog_id 1364 link_id 132 
-cali6475b7533f3(14) tcx/ingress cali_tc_preamble prog_id 1370 link_id 134 
-cali6475b7533f3(14) tcx/egress cali_tc_preamble prog_id 1375 link_id 135 
-egress.calico(28) tcx/ingress cali_tc_preamble prog_id 1327 link_id 126 
-egress.calico(28) tcx/egress cali_tc_preamble prog_id 1323 link_id 124 
-cali06dc3cdb52a(33) tcx/ingress cali_tc_preamble prog_id 1376 link_id 136 
-cali06dc3cdb52a(33) tcx/egress cali_tc_preamble prog_id 1378 link_id 137 
-bpfout.cali(48) tcx/ingress cali_tc_preamble prog_id 1318 link_id 123 
-bpfout.cali(48) tcx/egress cali_tc_preamble prog_id 1317 link_id 122 
+lo(1) clsact/ingress cali_tc_preambl:[956] id 956
+lo(1) clsact/egress cali_tc_preambl:[958] id 958
+ens5(2) clsact/ingress cali_tc_preambl:[1004] id 1004
+ens5(2) clsact/egress cali_tc_preambl:[998] id 998
+cali349113e2681(3) clsact/ingress cali_tc_preambl:[1058] id 1058
+cali349113e2681(3) clsact/egress cali_tc_preambl:[1064] id 1064
+calibd567c90380(6) clsact/ingress cali_tc_preambl:[1040] id 1040
+calibd567c90380(6) clsact/egress cali_tc_preambl:[1041] id 1041
+cali8b5d1a98c5f(11) clsact/ingress cali_tc_preambl:[1051] id 1051
+cali8b5d1a98c5f(11) clsact/egress cali_tc_preambl:[1053] id 1053
+calia28da0d09ff(18) clsact/ingress cali_tc_preambl:[1065] id 1065
+calia28da0d09ff(18) clsact/egress cali_tc_preambl:[1063] id 1063
+calie702a04113a(19) clsact/ingress cali_tc_preambl:[1031] id 1031
+calie702a04113a(19) clsact/egress cali_tc_preambl:[1034] id 1034
+calib68cf938cfb(22) clsact/ingress cali_tc_preambl:[1035] id 1035
+calib68cf938cfb(22) clsact/egress cali_tc_preambl:[1029] id 1029
+cali7fd6f2bf18c(23) clsact/ingress cali_tc_preambl:[1047] id 1047
+cali7fd6f2bf18c(23) clsact/egress cali_tc_preambl:[1049] id 1049
+egress.calico(41) clsact/ingress cali_tc_preambl:[1002] id 1002
+egress.calico(41) clsact/egress cali_tc_preambl:[1000] id 1000
+bpfout.cali(56) clsact/ingress cali_tc_preambl:[983] id 983
+bpfout.cali(56) clsact/egress cali_tc_preambl:[981] id 981
 
 flow_dissector:
-
-netfilter:
 ```
 
 Exit the ssh session.
@@ -792,7 +798,7 @@ ssh control1
 sudo bpftool net show
 ```
 
-The `tc:` section should no longer list any `cali_tc_preamble` programs. Exit the ssh session.
+The `tc:` section should no longer list any `cali_tc_preambl` programs. Exit the ssh session.
 
 ```bash
 exit
