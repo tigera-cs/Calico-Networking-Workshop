@@ -335,30 +335,34 @@ kubectl exec -ti $CALICO_NODE -n calico-system -c calico-node -- calico-node -bp
 You should see an output similar to the following.
 
 ```text
-Defaulted container "calico-node" out of: calico-node, flexvol-driver (init), ebpf-bootstrap (init), cni-plugins (init), install-cni (init)
    10.0.1.20/32: local host
    10.0.1.30/32: remote host
    10.0.1.31/32: remote host
+  10.10.10.0/30: remote in-pool
+  10.10.20.0/30: remote in-pool
    10.48.0.0/24: remote in-pool nat-out
-   10.48.0.0/26: remote workload in-pool nat-out nh 10.0.1.31
- 10.48.0.128/32: local workload in-pool nat-out idx 4
- 10.48.0.132/32: local workload in-pool nat-out idx 12
- 10.48.0.133/32: local workload in-pool nat-out idx 13
- 10.48.0.134/32: local workload in-pool nat-out idx 14
- 10.48.0.135/32: local workload in-pool nat-out idx 15
- 10.48.0.136/32: local workload in-pool nat-out idx 18
- 10.48.0.137/32: local workload in-pool nat-out idx 19
- 10.48.0.138/32: local workload in-pool nat-out idx 20
- 10.48.0.192/26: remote workload in-pool nat-out nh 10.0.1.30
-  172.17.0.1/32: local host
+   10.48.0.0/32: local workload in-pool nat-out idx 3
+   10.48.0.3/32: local workload in-pool nat-out idx 6
+   10.48.0.4/32: local workload in-pool nat-out idx 11
+   10.48.0.5/32: local workload in-pool nat-out idx 18
+   10.48.0.6/32: local workload in-pool nat-out idx 19
+   10.48.0.7/32: local workload in-pool nat-out idx 22
+   10.48.0.8/32: local workload in-pool nat-out idx 23
+  10.48.0.64/26: remote workload in-pool nat-out nh 10.0.1.30
+ 10.48.0.192/26: remote workload in-pool nat-out nh 10.0.1.31
+   10.48.2.0/24: remote in-pool nat-out
+ 10.48.2.224/29: remote workload in-pool nat-out nh 10.0.1.30
+ 10.48.128.0/24: remote in-pool nat-out
+10.48.128.64/26: remote workload in-pool nat-out nh 10.0.1.30
+10.48.128.192/26: remote workload in-pool nat-out nh 10.0.1.31
 ```
 
-Note the following about the above output.
+This is the same information as the Linux routing table in the previous step, in the form Calico's eBPF programs use it. Note the following about the above output.
 
-* `10.0.1.20/32: local host` = ip is the local node ip
-* `10.0.1.30/32: remote host` = ip is a remote node ip
-* `10.48.162.128/26: remote workload in-pool nat-out nh 10.0.1.31` = remote pod network on node -> 10.0.1.31
-* `10.255.241.69/32: local workload in-pool nat-out idx 77` = local pod
+* `10.0.1.20/32: local host` is this node's own IP. `10.0.1.30/32: remote host` and `10.0.1.31/32: remote host` are the other nodes.
+* `10.48.0.0/24: remote in-pool nat-out` is an IPPool CIDR. `in-pool` tells eBPF the address belongs to a Calico IPPool, and `nat-out` that the pool has `natOutgoing: true`, so traffic from it to destinations outside the cluster is SNATed to the node IP. The egress gateway pools `10.10.10.0/30` and `10.10.20.0/30` show `in-pool` without `nat-out` because they were created without `natOutgoing`.
+* `10.48.0.3/32: local workload in-pool nat-out idx 6` is a pod on this node. `idx` is the interface index of its `cali*` interface, the same number shown in brackets in the `bpftool net show` output in step 8, for example `calibd567c90380(6)`.
+* `10.48.0.64/26: remote workload in-pool nat-out nh 10.0.1.30` is an IPAM block owned by another node. `nh` is the next hop, so pods in this block are reached via worker1 (`10.0.1.30`).
 
 ### 12. List the summary service and its endpoints
 
