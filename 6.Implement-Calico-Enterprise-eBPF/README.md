@@ -154,6 +154,12 @@ ssh into `control1` node.
 ssh control1
 ```
 
+`bpftool` is not installed on the lab nodes by default. On Ubuntu it ships in the `linux-tools` package that matches the running kernel, so install it with the following commands. `$(uname -r)` picks the package for the node's kernel, for example `linux-tools-5.15.0-1084-aws`.
+
+```bash
+sudo apt-get install -y linux-tools-common linux-tools-$(uname -r)
+```
+
 Run the following command.
 
 ```bash
