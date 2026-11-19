@@ -227,15 +227,18 @@ You should see the same output as on the node.
 
 ### 9. Inspect the eBPF configuration with the Calico BPF tool
 
-Calico Enterprise includes a BPF tool to interact with Calico Enterprise eBPF and collect relevant information. It is part of the `calico` binary in the calico-node pods, and you run it as `calico component node bpf <command>`. Let's use it to view the configurations implemented by eBPF. We will run these commands from the calico-node pod running on `control1`.
+Calico Enterprise includes a BPF tool to interact with Calico Enterprise eBPF and collect relevant information. It is built into the `calico-node` binary in the calico-node pods, and you run it as `calico-node -bpf <command>`. Let's use it to view the configurations implemented by eBPF. We will run these commands from the calico-node pod running on `control1`.
 
 ```bash
 CALICO_NODE=$(kubectl get pods -n calico-system -l k8s-app=calico-node -o wide | grep 10.0.1.20 | awk {'print $1'}) && echo $CALICO_NODE
 ```
 
 ```bash
-kubectl exec -ti $CALICO_NODE -n calico-system -- calico component node bpf help
+kubectl exec -ti $CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf help
 ```
+
+> [!NOTE]
+> In the latest Calico Enterprise releases, the BPF tool is run as `calico component node bpf <command>` instead of `calico-node -bpf <command>`.
 
 You should see an output similar to the following.
 
@@ -317,7 +320,7 @@ exit
 Now, let's check the eBPF routing table on calico-node running on `control1`.
 
 ```bash
-kubectl exec -ti $CALICO_NODE -n calico-system -- calico component node bpf routes dump
+kubectl exec -ti $CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf routes dump
 ```
 
 You should see an output similar to the following.
@@ -393,7 +396,7 @@ summary   10.48.0.210:80,10.48.0.212:80   9m58s
 Run the following command to list the `summary` service implemented through eBPF. It uses the cluster IP you saved in `SUMMARY_IP` in the previous step.
 
 ```bash
-kubectl exec -ti $CALICO_NODE -n calico-system -- calico component node bpf nat dump | grep -A2 "$SUMMARY_IP port"
+kubectl exec -ti $CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf nat dump | grep -A2 "$SUMMARY_IP port"
 ```
 
 You should see an output similar to the following.
@@ -513,10 +516,10 @@ cali477407eea3b
 Now run the following command. It uses the calico-node pod and the interface name you saved in the previous two steps.
 
 > [!NOTE]
-> The command is `kubectl exec -ti <calico-node pod> -n calico-system -- calico component node bpf policy dump <interface> <hook>`. The interface is the host endpoint (HEP) or workload endpoint (WEP) interface name. `<hook>` can be `ingress`, `egress`, `xdp` or `all`. Add `--asm` to also print the eBPF assembler code of the policy program.
+> The command is `kubectl exec -ti <calico-node pod> -n calico-system -- calico-node -bpf policy dump <interface> <hook>`. The interface is the host endpoint (HEP) or workload endpoint (WEP) interface name. `<hook>` can be `ingress`, `egress`, `xdp` or `all`. Add `--asm` to also print the eBPF assembler code of the policy program.
 
 ```bash
-kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -- calico component node bpf policy dump $CUSTOMER_IFACE ingress
+kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf policy dump $CUSTOMER_IFACE ingress
 ```
 
 You should see an output similar to the following. Get yourself familiar with the following output. Note how calico bpf till list the policy rules according to the order they were implemented in the policy above.
@@ -552,7 +555,7 @@ The hit count goes up once per new connection, not once per packet. Calico Enter
 Run the policy dump again.
 
 ```bash
-kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -- calico component node bpf policy dump $CUSTOMER_IFACE ingress
+kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf policy dump $CUSTOMER_IFACE ingress
 ```
 
 **Example output:**
@@ -579,7 +582,7 @@ Alternatively, if you want to see more information about your policy, run the fo
 
 ```bash
 kubectl exec -n calico-system $CUSTOMER_CALICO_NODE -c calico-node -- \
-  calico component node bpf policy dump $CUSTOMER_IFACE ingress --asm \
+  calico-node -bpf policy dump $CUSTOMER_IFACE ingress --asm \
   | grep -E 'Hook:|Policy:|Rule:|Hit count|// If ' | grep -v 'named ports {}'
 ```
 
@@ -614,7 +617,7 @@ This makes policy fast and easy to keep up to date:
 In eBPF mode, all IP sets on a node are stored in one BPF map. To list them, run the following command.
 
 ```bash
-kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -- calico component node bpf ipsets dump
+kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf ipsets dump
 ```
 
 You should see an output similar to the following. However, the list can be different depending on the available ipsets on the node.
@@ -673,7 +676,7 @@ How to read the output:
 To list the conntrack map, run the following command.
 
 ```bash
-kubectl exec -ti $CALICO_NODE -n calico-system -- calico component node bpf conntrack dump
+kubectl exec -ti $CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf conntrack dump
 ```
 
 You should see an output similar to the following. The following output is truncated.
