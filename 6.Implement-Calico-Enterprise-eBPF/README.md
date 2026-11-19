@@ -292,22 +292,31 @@ ip route show
 You should see an output similar to the following.
 
 ```text
-default via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.20 metric 100 
-10.0.1.0/24 dev ens5 proto kernel scope link src 10.0.1.20 
-10.0.1.1 dev ens5 proto dhcp scope link src 10.0.1.20 metric 100 
-10.48.0.0/26 via 10.0.1.31 dev ens5 proto bird 
-10.48.0.128 dev cali4b8da7b4d32 scope link 
-blackhole 10.48.0.128/26 proto bird 
-10.48.0.132 dev calia8fdb5c22c7 scope link 
-10.48.0.133 dev cali28487a3174b scope link 
-10.48.0.134 dev cali511b65d1b41 scope link 
-10.48.0.135 dev cali42e0d8fec43 scope link 
-10.48.0.136 dev cali78bac677beb scope link 
-10.48.0.137 dev cali1c0cad31d33 scope link 
-10.48.0.138 dev cali0c3fb9ffe63 scope link 
-10.48.0.192/26 via 10.0.1.30 dev ens5 proto bird 
-172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 linkdown 
+default via 10.0.1.1 dev ens5 proto dhcp src 10.0.1.20 metric 100
+10.0.1.0/24 dev ens5 proto kernel scope link src 10.0.1.20 metric 100
+10.0.1.1 dev ens5 proto dhcp scope link src 10.0.1.20 metric 100
+10.48.0.0 dev cali349113e2681 scope link metric 1024
+blackhole 10.48.0.0/26 proto bird
+10.48.0.3 dev calibd567c90380 scope link metric 1024
+10.48.0.4 dev cali8b5d1a98c5f scope link metric 1024
+10.48.0.5 dev calia28da0d09ff scope link metric 1024
+10.48.0.6 dev calie702a04113a scope link metric 1024
+10.48.0.7 dev calib68cf938cfb scope link metric 1024
+10.48.0.8 dev cali7fd6f2bf18c scope link metric 1024
+10.48.0.64/26 via 10.0.1.30 dev ens5 proto bird metric 1024
+10.48.0.192/26 via 10.0.1.31 dev ens5 proto bird metric 1024
+10.48.2.224/29 via 10.0.1.30 dev ens5 proto bird metric 1024
+10.48.128.64/26 via 10.0.1.30 dev ens5 proto bird metric 1024
+10.48.128.192/26 via 10.0.1.31 dev ens5 proto bird metric 1024
+10.49.0.10 via 169.254.1.1 dev bpfin.cali src 10.0.1.20
+169.254.1.1 dev bpfin.cali scope link
 ```
+
+A few things worth noting:
+
+* **The `bpfin.cali` routes only exist in eBPF mode.** `bpfin.cali` and `bpfout.cali` are a veth pair Calico creates in the host namespace. Traffic that originates on the node itself, such as DNS lookups to the kube-dns ClusterIP `10.49.0.10`, is steered through this pair so Calico's eBPF programs can do the service NAT, since kube-proxy and its iptables rules are gone.
+* **The `blackhole 10.48.0.0/26` route is this node's own IPAM block.** Packets to an address in the block that has no pod are dropped here rather than forwarded, which prevents routing loops. The per-pod `/32` routes via the `cali*` interfaces are more specific, so they win for real pods.
+* **The rest of the table is unchanged by eBPF.** Everything you learned in the earlier modules still applies. Each local pod has a `/32` route pointing at its `cali*` interface. The `/26` blocks learned over BGP (`proto bird`) show the IPAM blocks that worker1 (`10.0.1.30`) and worker2 (`10.0.1.31`) own in both the default pool `10.48.0.0/24` and `pool2-ipv4-ippool` `10.48.128.0/24`, and `10.48.2.224/29` is the block from the externally routable pool in module 3. Switching the dataplane did not change how routes are learned or installed: BIRD still peers with the other nodes and Felix still programs the pod routes. What changed is who consumes them. Calico eBPF reads this table to decide where to send the first packet of each flow and records the result in its conntrack map, so later packets of the same flow are forwarded by the eBPF program without a routing lookup. The next step dumps the eBPF route map, which is Calico's own copy of this information, so you can compare the two.
 
 Exit the ssh session.
 
