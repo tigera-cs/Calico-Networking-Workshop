@@ -699,6 +699,22 @@ egress-gateway-5fb89cf946-snznd   0/1     Running   0          3m25s   10.10.10.
 
 Press `Ctrl+C` to stop `watch`.
 
+Check the egress gateway logs to see the ICMP probe towards `10.0.1.10` failing.
+
+```bash
+kubectl logs -n default -l egress-code=red --tail=20
+```
+
+**Example output:**
+
+```text
+--- 10.0.1.10 ping statistics ---
+1 packets transmitted, 0 received, 100% packet loss, time 0ms
+
+ ip=10.0.1.10 rc=1
+2026-11-25 21:31:24.642 [WARNING][7] egressd/icmp_probe.go 49: ICMP probe failed:
+```
+
 > [!NOTE]
 > Felix on each node also checks the readiness of every egress gateway and stops sending traffic through one that is not ready. With no ready egress gateway left, traffic from `app1` to destinations outside the cluster is dropped rather than sent from the pod's own IP address, so the source IP that outside systems see never changes. It flows again through the egress gateway as soon as the gateway is ready again.
 
