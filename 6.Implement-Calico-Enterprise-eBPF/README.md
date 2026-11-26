@@ -621,7 +621,7 @@ Hook: tc egress
 
 ### 19. List the ipsets in use on the node
 
-Network policies select pods by label, for example `app == "customer"`. Packets don't carry labels, though: a packet only has a source and destination IP address and port. So when a packet arrives, Calico's eBPF program needs a way to know whether the packet's IP belongs to a pod with those labels. Calico Enterprise solves this with IP sets: for each selector used inside a policy rule (`source.selector` or `destination.selector`), Felix keeps a list of the IPs of the pods that currently match it. The rule then checks "is the source (or destination) in IP set X?" instead of listing pod IPs. The policy's own top-level `selector` is different: it only decides which pods the policy is attached to, and never creates an IP set.
+Network policies select pods by label, for example `app == "customer"`. Packets don't carry labels, though: a packet only has a source and destination IP address and port. So when a packet arrives, Calico's eBPF program needs a way to know whether the packet's IP belongs to a pod with those labels. Calico Enterprise solves this with IP sets: for each selector used inside a policy rule (`source.selector` or `destination.selector`), Felix keeps a list of the IPs of the pods that currently match it. The rule then checks "is the source (or destination) in IP set X?" instead of listing pod IPs.
 
 This makes policy fast and easy to keep up to date:
 
@@ -691,7 +691,10 @@ Notice that the customer pod's IP is not in any set, even though the `default.cu
 kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf ipsets dump | grep $CUSTOMER_IP
 ```
 
-The sets you do see belong to Calico Enterprise's own policies in the `allow-tigera` tier, which select system pods by label inside their rules. The `default.customer` policy uses `source: {}` in every rule, so there is nothing to look up and no set is created for it.
+> [!NOTE]
+> The `default.customer` policy has `selector: app == "customer"`, but that is the policy's top-level selector. Felix uses it only to decide which pods the policy is attached to, which is why the policy appeared on the customer pod's `cali*` interface in step 17. Any packet on that interface is already going to the customer pod, so the destination is known from the interface itself and there is nothing to look up. An IP set is only created for a selector inside a rule, such as `source.selector`, where the program has to ask "does the other end of this packet carry label X?". Every rule in `default.customer` uses `source: {}`, meaning any source, so no set is created for it.
+>
+> The sets you do see belong to Calico Enterprise's own policies in the `allow-tigera` tier, which select system pods by label inside their rules.
 
 ### 20. Put the customer pod in an IP set
 
