@@ -621,7 +621,7 @@ Hook: tc egress
 
 ### 19. List the ipsets in use on the node
 
-Network policies select pods by label, for example `app == "customer"`. Packets don't carry labels, though: a packet only has a source and destination IP address and port. So when a packet arrives, Calico's eBPF program needs a way to know whether the packet's IP belongs to a pod with those labels. Calico Enterprise solves this with IP sets: for each selector used in a policy, Felix keeps a list of the IPs of the pods that currently match it. A policy rule then checks "is the source (or destination) in IP set X?" instead of listing pod IPs.
+Network policies select pods by label, for example `app == "customer"`. Packets don't carry labels, though: a packet only has a source and destination IP address and port. So when a packet arrives, Calico's eBPF program needs a way to know whether the packet's IP belongs to a pod with those labels. Calico Enterprise solves this with IP sets: for each selector used inside a policy rule (`source.selector` or `destination.selector`), Felix keeps a list of the IPs of the pods that currently match it. The rule then checks "is the source (or destination) in IP set X?" instead of listing pod IPs. The policy's own top-level `selector` is different: it only decides which pods the policy is attached to, and never creates an IP set.
 
 This makes policy fast and easy to keep up to date:
 
@@ -685,7 +685,116 @@ How to read the output:
 * Some members also have a port and protocol, such as `10.49.0.10:53 (proto 17)`, where 17 is UDP and 6 is TCP. These come from rules that match named ports or Kubernetes services.
 * `IP set 0x100000001` is a reserved set: the trusted DNS servers, here the `kube-dns` service. Calico Enterprise reads DNS replies only from these servers, which is how policies that allow traffic by domain name learn the IPs behind those names.
 
-### 20. Dump the conntrack map
+Notice that the customer pod's IP is not in any set, even though the `default.customer` policy is attached to it:
+
+```bash
+kubectl exec -ti $CUSTOMER_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf ipsets dump | grep $CUSTOMER_IP
+```
+
+The sets you do see belong to Calico Enterprise's own policies in the `allow-tigera` tier, which select system pods by label inside their rules. The `default.customer` policy uses `source: {}` in every rule, so there is nothing to look up and no set is created for it.
+
+### 20. Put the customer pod in an IP set
+
+To see an IP set being created and used, create a policy on the `summary` pods that allows port 80 only from pods labeled `app == "customer"`. This time the selector is inside the rule, so Felix must resolve it to the customer pod's IP.
+
+```yaml
+kubectl apply -f -<<EOF
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: default.summary
+  namespace: yaobank
+spec:
+  tier: default
+  order: 100
+  selector: app == "summary"
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: app == "customer"
+      destination:
+        ports:
+          - '80'
+  types:
+    - Ingress
+EOF
+```
+
+The policy is attached to the summary pods, so the IP set lives on the node that runs them. Find a summary pod, its calico-node pod and its interface, as you did for the customer pod.
+
+```bash
+SUMMARY_IP=$(kubectl get pods -n yaobank -l app=summary -o jsonpath='{.items[0].status.podIP}') && echo $SUMMARY_IP
+SUMMARY_HOST=$(kubectl get pods -n yaobank -l app=summary -o jsonpath='{.items[0].spec.nodeName}') && echo $SUMMARY_HOST
+SUMMARY_CALICO_NODE=$(kubectl get pods -n calico-system -l k8s-app=calico-node --field-selector spec.nodeName=$SUMMARY_HOST -o jsonpath='{.items[0].metadata.name}') && echo $SUMMARY_CALICO_NODE
+SUMMARY_IFACE=$(kubectl exec -n calico-system $SUMMARY_CALICO_NODE -c calico-node -- ip route get $SUMMARY_IP | awk '/dev/ {print $3}') && echo $SUMMARY_IFACE
+```
+
+The customer pod's IP is now in an IP set on that node.
+
+```bash
+kubectl exec -ti $SUMMARY_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf ipsets dump | grep -B1 $CUSTOMER_IP
+```
+
+**Example output:**
+
+```text
+IP set 0x8f6245dafaf474b
+   10.48.0.250/32
+```
+
+Dump the policy program on the summary pod's interface. The rule now has an extra check against that IP set, with the same ID.
+
+```bash
+kubectl exec -n calico-system $SUMMARY_CALICO_NODE -c calico-node -- \
+  calico-node -bpf policy dump $SUMMARY_IFACE ingress --asm \
+  | grep -E 'Hook:|Policy:|Rule:|Hit count|// If ' | grep -v 'named ports {}'
+```
+
+**Example output:**
+
+```text
+Hook: tc egress
+    Policy: NetworkPolicy yaobank/default.summary 0
+      Rule: yaobank/default.summary  Action: allow
+      Hit count: 0
+      // If protocol != tcp, skip to next rule
+      // If source doesn't match ipset s:XihFArj8vACzofL_FkyJlKbIwT6fP91GXJJmMQ (0x8f6245dafaf474b), skip to next rule
+      // If dest port is not within any of {80}, skip to next rule
+    End Policy: NetworkPolicy yaobank/default.summary 0
+      Rule: kns.yaobank  Action: allow
+      Hit count: 8
+```
+
+The customer page calls the summary service on every request, so the same NodePort test as before sends traffic through this rule. Run it again from the bastion.
+
+```bash
+for i in 1 2 3 4; do curl -s -o /dev/null -w '%{http_code}\n' http://10.0.1.20:30180; done
+```
+
+```bash
+kubectl exec -ti $SUMMARY_CALICO_NODE -n calico-system -c calico-node -- calico-node -bpf policy dump $SUMMARY_IFACE ingress
+```
+
+**Example output:**
+
+```text
+IfaceName: cali5a8458d84ca
+Hook: tc egress
+  Tier: default
+    Policy: NetworkPolicy yaobank/default.summary 0
+      Rule: yaobank/default.summary  Action: allow
+      IP sets: src={10.48.0.250/32}
+      Hit count: 4
+    End Policy: NetworkPolicy yaobank/default.summary 0
+  End Tier: default  (action: deny)
+      Rule: kns.yaobank  Action: allow
+      Hit count: 12
+```
+
+The rule shows the set it matched on, `src={10.48.0.250/32}`, and the hits came from the customer pod reaching summary. There are two summary pods, so if the load balancer sends some requests to the other one, the hit count on this interface is lower than 4.
+
+### 21. Dump the conntrack map
 
 To list the conntrack map, run the following command.
 
