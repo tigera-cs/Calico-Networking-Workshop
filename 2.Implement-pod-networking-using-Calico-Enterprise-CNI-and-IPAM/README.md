@@ -296,8 +296,9 @@ You can find these values using the following command.
 kubectl cluster-info dump | grep -m 2 -E "service-cluster-ip-range|cluster-cidr"
 ```
 
-```bash
-kubectl cluster-info dump | grep -m 2 -E "service-cluster-ip-range|cluster-cidr"
+**Example output:**
+
+```text
                             "--service-cluster-ip-range=10.49.0.0/16",
                             "--cluster-cidr=10.48.0.0/16",
 ```
